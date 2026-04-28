@@ -1,0 +1,61 @@
+{
+  "name": "Archival Keyword Toolkit",
+  "summary": "A focused toolkit for archival keyword searching across email containers, message files, and general documents. The repo now centers on the current MailHog and FileHog apps, their shared backends, and a smaller current-state documentation set.",
+  "releaseTarget": "macOS and Linux",
+  "primaryStack": "Go, Wails, Bubble Tea, Vite",
+  "lastCleanup": "2026-04-10",
+  "tools": [
+    {
+      "name": "MailHog",
+      "description": "Desktop email keyword hunter for PST, OST, EML, MSG, MBOX, and MBX sources with review-friendly export artifacts."
+    },
+    {
+      "name": "FileHog",
+      "description": "Desktop non-email keyword hunter with filename searching plus content extraction for direct text, OpenXML, PDF, and some office formats."
+    },
+    {
+      "name": "CLI / TUI",
+      "description": "Terminal entrypoint for the email scanner backend, useful for batch work and smoke checks."
+    }
+  ],
+  "architecture": [
+    "mailhog/ and filehog/ contain the Wails desktop shells and frontend code.",
+    "scanner/ holds the email scanning backend and core MailHog logic.",
+    "filescanner/ holds the non-email scanning backend and FileHog logic.",
+    "cmd/keyword-hunter-cli/ and tui/ provide the email-side terminal workflow.",
+    "scripts/install-commands.sh, scripts/release/linux/, and packaging/linux/ stay aligned with shipping and install behavior."
+  ],
+  "docs": [
+    "README.md is the main current-state guide.",
+    "TODO.md holds active follow-up work instead of spreading plans across stale notes.",
+    "testing/README.md explains the test layout and fixture conventions.",
+    "project-dashboard/ provides a lightweight static status view."
+  ],
+  "dependencies": [
+    "Go and Node.js are required to build the desktop apps locally.",
+    "Linux desktop builds require GTK3 and WebKit2GTK development packages.",
+    "MailHog optionally uses readpst and Python 3 plus extract-msg for richer email format support.",
+    "FileHog optionally uses pdftotext and LibreOffice for broader content extraction."
+  ],
+  "openIssues": [
+    "Automated coverage for PST, OST, MSG, PDF, and LibreOffice-assisted extraction still needs to grow.",
+    "Linux desktop launcher behavior needs validation across more desktop environments.",
+    "Release validation is still mostly smoke-check driven rather than fully automated."
+  ],
+  "limitations": [
+    "Windows support remains deferred and is not treated as a current release target.",
+    "Some file-type capabilities degrade to filename-only matching when optional helpers are not installed.",
+    "UI-level desktop testing is still light compared with backend package tests."
+  ],
+  "testing": [
+    "Package-level Go tests stay near scanner/ and filescanner/.",
+    "testing/mailhog/ and testing/filehog/ now provide discoverable generators and runner scripts.",
+    "Generated fixtures, outputs, and machine-local sample sets are intentionally ignored."
+  ],
+  "recentChanges": [
+    "Removed stale planning docs, handoff notes, and legacy merged-repo leftovers from the tracked repo surface.",
+    "Consolidated project guidance into a stronger README plus TODO and dashboard.",
+    "Added a tool-oriented testing layout and missing FileHog backend tests.",
+    "Tightened .gitignore for generated build and testing artifacts."
+  ]
+}

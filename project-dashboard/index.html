@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Archival Keyword Toolkit Dashboard</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <main class="dashboard">
+      <section class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">Project Dashboard</p>
+          <h1 id="project-name">Archival Keyword Toolkit</h1>
+          <p id="project-summary" class="summary"></p>
+          <div class="hero-meta">
+            <div class="meta-card">
+              <span class="meta-label">Release Target</span>
+              <strong id="release-target"></strong>
+            </div>
+            <div class="meta-card">
+              <span class="meta-label">Primary Stack</span>
+              <strong id="primary-stack"></strong>
+            </div>
+            <div class="meta-card">
+              <span class="meta-label">Last Cleanup</span>
+              <strong id="last-cleanup"></strong>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="grid two-up">
+        <article class="panel">
+          <h2>Tools</h2>
+          <div id="tools"></div>
+        </article>
+        <article class="panel">
+          <h2>Repository Shape</h2>
+          <ul id="architecture" class="list"></ul>
+        </article>
+      </section>
+
+      <section class="grid two-up">
+        <article class="panel">
+          <h2>Docs</h2>
+          <ul id="docs" class="list"></ul>
+        </article>
+        <article class="panel">
+          <h2>Dependencies</h2>
+          <ul id="dependencies" class="list"></ul>
+        </article>
+      </section>
+
+      <section class="grid two-up">
+        <article class="panel">
+          <h2>Open Issues</h2>
+          <ul id="open-issues" class="list"></ul>
+        </article>
+        <article class="panel">
+          <h2>Known Limitations</h2>
+          <ul id="limitations" class="list"></ul>
+        </article>
+      </section>
+
+      <section class="grid two-up">
+        <article class="panel">
+          <h2>Testing</h2>
+          <ul id="testing" class="list"></ul>
+        </article>
+        <article class="panel">
+          <h2>Recent Changes</h2>
+          <ul id="recent-changes" class="list"></ul>
+        </article>
+      </section>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>

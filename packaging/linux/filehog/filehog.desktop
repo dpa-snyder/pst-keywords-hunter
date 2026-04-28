@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=FileHog
+Comment=Archival non-email keyword hunter
+Exec=/opt/filehog/filehog
+Icon=filehog
+Terminal=false
+Categories=Utility;Office;

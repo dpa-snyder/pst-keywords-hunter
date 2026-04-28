@@ -1,0 +1,12 @@
+import { main } from "../models";
+
+export function GetAppState(): Promise<main.AppState>;
+export function CancelPrescan(): Promise<void>;
+export function InstallDependency(arg1: main.InstallRequest): Promise<main.InstallResult>;
+export function OpenArtifact(arg1: string, arg2: string): Promise<void>;
+export function PickKeywordsFile(): Promise<string>;
+export function PickOutputDirectory(): Promise<string>;
+export function PickSourceDirectory(): Promise<string>;
+export function PrescanSource(arg1: string): Promise<main.PrescanResult>;
+export function StartRun(arg1: main.RunConfigInput): Promise<main.RunStarted>;
+export function ValidateRun(arg1: main.RunConfigInput): Promise<main.ValidationResult>;
