@@ -2,9 +2,12 @@ package filescanner
 
 import (
 	"archive/zip"
+	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha1"
 	"encoding/csv"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -51,6 +54,8 @@ const (
 	maxZipMemberContentBytes          = int64(512 * 1024 * 1024)
 	maxZipCompressionBombRatio        = 1000
 	minZipCompressionBombBytes        = uint64(100 * 1024 * 1024)
+	maxOutputPathComponentBytes       = 240
+	directTextChunkBytes              = 256 * 1024
 	zipEncryptedFlag           uint16 = 0x1
 )
 
@@ -532,14 +537,14 @@ func runWithOptionalSnapshot(cfg Config, events chan<- Event, snapshot *Inventor
 				summary.ContentSizeSkippedFiles++
 				note = fmt.Sprintf("content extraction skipped; file size %d exceeds max content bytes %d", file.SizeBytes, cfg.MaxContentBytes)
 			} else {
-				text, extractErr := extractSearchText(file)
+				hits, counts, total, extractErr := extractSearchHits(file, cfg.Terms)
 				if extractErr != nil {
 					warn := fmt.Sprintf("%s: %v", file.RelPath, extractErr)
 					summary.Warnings = append(summary.Warnings, warn)
 					logger.Log("WARNING: " + warn)
 					note = "content extraction failed; filename search only"
 				} else {
-					contentHits, contentHitCounts, contentHitTotal = findHits(text, cfg.Terms)
+					contentHits, contentHitCounts, contentHitTotal = hits, counts, total
 				}
 			}
 		}
@@ -1112,12 +1117,135 @@ func extractSearchText(file classifiedFile) (string, error) {
 	}
 }
 
+func extractSearchHits(file classifiedFile, terms []string) ([]string, map[string]int, int, error) {
+	if file.SearchMethod == MethodDirectText {
+		return countHitsInFile(file.Path, terms)
+	}
+	text, err := extractSearchText(file)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	hits, counts, total := findHits(text, terms)
+	return hits, counts, total, nil
+}
+
 func readDirectText(path string) (string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
 	}
 	return strings.ToLower(string(data)), nil
+}
+
+func countHitsInFile(path string, terms []string) ([]string, map[string]int, int, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	defer f.Close()
+	return countHitsInReader(f, terms)
+}
+
+func countHitsInReader(r io.Reader, terms []string) ([]string, map[string]int, int, error) {
+	if len(terms) == 0 {
+		return nil, map[string]int{}, 0, nil
+	}
+	lowerTerms := make([]string, 0, len(terms))
+	maxNeedleLen := 0
+	for _, term := range terms {
+		lower := strings.ToLower(term)
+		lowerTerms = append(lowerTerms, lower)
+		if len(lower) > maxNeedleLen {
+			maxNeedleLen = len(lower)
+		}
+	}
+	if maxNeedleLen == 0 {
+		return nil, map[string]int{}, 0, nil
+	}
+
+	reader := bufio.NewReaderSize(r, directTextChunkBytes)
+	buf := make([]byte, directTextChunkBytes)
+	tail := ""
+	counts := make(map[string]int)
+	total := 0
+
+	for {
+		n, err := reader.Read(buf)
+		if n > 0 {
+			chunk := strings.ToLower(string(buf[:n]))
+			combined := tail + chunk
+			tailLen := len(tail)
+			for i, needle := range lowerTerms {
+				count := countOccurrencesExcludingPrefix(combined, needle, tailLen)
+				if count == 0 {
+					continue
+				}
+				counts[terms[i]] += count
+				total += count
+			}
+			if maxNeedleLen > 1 {
+				tail = lastNBytes(combined, maxNeedleLen-1)
+			} else {
+				tail = ""
+			}
+		}
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, nil, 0, err
+		}
+	}
+
+	matches := make([]string, 0, len(terms))
+	for _, term := range terms {
+		if counts[term] > 0 {
+			matches = append(matches, term)
+		}
+	}
+	return matches, counts, total, nil
+}
+
+func countOccurrencesExcludingPrefix(haystack, needle string, prefixLen int) int {
+	if needle == "" {
+		return 0
+	}
+	count := 0
+	for offset := 0; ; {
+		idx := strings.Index(haystack[offset:], needle)
+		if idx == -1 {
+			return count
+		}
+		start := offset + idx
+		if start+len(needle) > prefixLen {
+			count++
+		}
+		offset = start + len(needle)
+		if offset >= len(haystack) {
+			return count
+		}
+	}
+}
+
+func lastNBytes(value string, n int) string {
+	if n <= 0 || value == "" {
+		return ""
+	}
+	if len(value) <= n {
+		return value
+	}
+	start := len(value) - n
+	for start < len(value) && !utf8RuneStart(value[start]) {
+		start++
+	}
+	if start >= len(value) {
+		return value[len(value)-n:]
+	}
+	return value[start:]
+}
+
+func utf8RuneStart(b byte) bool {
+	return b&0xC0 != 0x80
 }
 
 func readOpenXML(path, ext string) (string, error) {
@@ -1676,7 +1804,65 @@ func sourceRelativeOutputPath(root, relPath string) (string, error) {
 	if filepath.IsAbs(cleaned) || cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("unsafe relative path %q", relPath)
 	}
-	return filepath.Join(root, cleaned), nil
+	return filepath.Join(root, shortenRelativePathForFilesystem(cleaned)), nil
+}
+
+func shortenRelativePathForFilesystem(relPath string) string {
+	parts := strings.Split(filepath.ToSlash(relPath), "/")
+	for i, part := range parts {
+		preserveExt := i == len(parts)-1
+		parts[i] = shortenPathComponent(part, preserveExt)
+	}
+	return filepath.FromSlash(strings.Join(parts, "/"))
+}
+
+func shortenPathComponent(name string, preserveExt bool) string {
+	if len([]byte(name)) <= maxOutputPathComponentBytes {
+		return name
+	}
+
+	suffix := "~" + shortStableHash(name)
+	ext := ""
+	base := name
+	if preserveExt {
+		ext = filepath.Ext(name)
+		base = strings.TrimSuffix(name, ext)
+	}
+	if len([]byte(ext))+len([]byte(suffix)) >= maxOutputPathComponentBytes {
+		ext = trimToByteLimit(ext, maxOutputPathComponentBytes/4)
+	}
+	allowedBaseBytes := maxOutputPathComponentBytes - len([]byte(ext)) - len([]byte(suffix))
+	if allowedBaseBytes < 8 {
+		allowedBaseBytes = 8
+	}
+	base = trimToByteLimit(base, allowedBaseBytes)
+	if strings.TrimSpace(base) == "" {
+		base = "item"
+	}
+	return base + suffix + ext
+}
+
+func shortStableHash(value string) string {
+	sum := sha1.Sum([]byte(value))
+	return hex.EncodeToString(sum[:])[:12]
+}
+
+func trimToByteLimit(value string, limit int) string {
+	if limit <= 0 || value == "" {
+		return ""
+	}
+	if len([]byte(value)) <= limit {
+		return value
+	}
+	var b strings.Builder
+	for _, r := range value {
+		next := b.Len() + len(string(r))
+		if next > limit {
+			break
+		}
+		b.WriteRune(r)
+	}
+	return strings.TrimSpace(b.String())
 }
 
 func copySourceFileOnce(copied map[string]string, sourcePath, relPath, outputDir, copyDir string) (string, bool, error) {
@@ -1732,7 +1918,7 @@ func copyDirTree(src, dst string) error {
 		if err != nil {
 			return err
 		}
-		target := filepath.Join(dst, rel)
+		target := filepath.Join(dst, shortenRelativePathForFilesystem(rel))
 		if info.IsDir() {
 			return os.MkdirAll(target, info.Mode())
 		}

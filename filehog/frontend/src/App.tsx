@@ -826,9 +826,10 @@ function App() {
           {sectionOpen.limits && (
             <div className="section-body">
               <div className="field-row search-limits-grid">
-                <label className="field-shell">
+                <label className="field-shell limit-select-shell">
                   <span>Search Scope</span>
                   <select
+                    className="limit-select"
                     value={config.searchScope}
                     onChange={(e) => updateConfig("searchScope", e.target.value as RunConfigInput["searchScope"])}
                   >

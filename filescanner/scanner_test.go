@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -229,6 +230,46 @@ func TestRunWithSummaryCopiesMatchedFileOnce(t *testing.T) {
 	}
 }
 
+func TestSourceRelativeOutputPathShortensOverlongSegments(t *testing.T) {
+	root := t.TempDir()
+	longName := strings.Repeat("a", 280) + "-harbor.txt"
+
+	target, err := sourceRelativeOutputPath(root, filepath.ToSlash(filepath.Join("docs", longName)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	base := filepath.Base(target)
+	if len([]byte(base)) > maxOutputPathComponentBytes {
+		t.Fatalf("expected shortened basename to be <= %d bytes, got %d", maxOutputPathComponentBytes, len([]byte(base)))
+	}
+	if filepath.Ext(base) != ".txt" {
+		t.Fatalf("expected extension to be preserved, got %q", filepath.Ext(base))
+	}
+	if !strings.Contains(base, "~") {
+		t.Fatalf("expected shortened basename to include a stable hash suffix, got %q", base)
+	}
+}
+
+func TestShortenRelativePathForFilesystemShortensNestedSegments(t *testing.T) {
+	longDir := strings.Repeat("b", 280)
+	longFile := strings.Repeat("c", 280) + ".bin"
+
+	shortened := filepath.ToSlash(shortenRelativePathForFilesystem(filepath.ToSlash(filepath.Join(longDir, longFile))))
+	parts := strings.Split(shortened, "/")
+	if len(parts) != 2 {
+		t.Fatalf("expected 2 path parts, got %v", parts)
+	}
+	for _, part := range parts {
+		if len([]byte(part)) > maxOutputPathComponentBytes {
+			t.Fatalf("expected shortened part <= %d bytes, got %d", maxOutputPathComponentBytes, len([]byte(part)))
+		}
+	}
+	if filepath.Ext(parts[1]) != ".bin" {
+		t.Fatalf("expected file extension to be preserved, got %q", filepath.Ext(parts[1]))
+	}
+}
+
 func TestRunWithSummarySearchesZipMembersAndCopiesArchiveOnce(t *testing.T) {
 	sourceDir := t.TempDir()
 	outputDir := t.TempDir()
@@ -341,6 +382,33 @@ func TestFindHitsCountsRepeatedOccurrences(t *testing.T) {
 	}
 	if counts["harbor"] != 1 {
 		t.Fatalf("expected harbor count 1, got %d", counts["harbor"])
+	}
+}
+
+func TestRunWithSummaryCountsLargeSingleLineDirectTextWithoutLoadingByScannerLine(t *testing.T) {
+	sourceDir := t.TempDir()
+	outputDir := t.TempDir()
+	content := strings.Repeat("x", directTextChunkBytes-4) + " harbor " + strings.Repeat("y", directTextChunkBytes+17) + " harbor "
+	mustWriteFile(t, filepath.Join(sourceDir, "docs", "giant-line.txt"), content)
+
+	summary, err := RunWithSummary(Config{
+		SourceDir:   sourceDir,
+		OutputDir:   outputDir,
+		Terms:       []string{"harbor"},
+		SearchScope: SearchScopeContent,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if summary.MatchedFiles != 1 {
+		t.Fatalf("expected 1 giant direct-text match, got %d", summary.MatchedFiles)
+	}
+	if got := summary.ContentHitsByKeyword["harbor"]; got != 2 {
+		t.Fatalf("expected 2 giant-line content hits, got %d", got)
+	}
+	if summary.ManifestRows[0].ContentHitTotal != 2 {
+		t.Fatalf("expected manifest content hit total 2, got %d", summary.ManifestRows[0].ContentHitTotal)
 	}
 }
 
@@ -474,6 +542,48 @@ func TestRunWithSummaryWarnsWhenPDFExtractionFails(t *testing.T) {
 	}
 }
 
+func TestRunWithSummarySearchesPDFInsideZipViaPDFToText(t *testing.T) {
+	sourceDir := t.TempDir()
+	outputDir := t.TempDir()
+	stubDir := t.TempDir()
+	installStubCommand(t, stubDir, "pdftotext", "#!/bin/sh\nprintf 'Northwind appears inside archived PDF\\n'")
+	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	zipPath := filepath.Join(sourceDir, "archives", "pdf-bundle.zip")
+	mustWriteZip(t, zipPath, map[string]string{
+		"docs/notes.pdf": "%PDF-1.4 placeholder",
+	})
+
+	summary, err := RunWithSummary(Config{
+		SourceDir:   sourceDir,
+		OutputDir:   outputDir,
+		Terms:       []string{"northwind"},
+		SearchScope: SearchScopeBoth,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if summary.MatchedFiles != 1 {
+		t.Fatalf("expected 1 archived PDF match, got %d", summary.MatchedFiles)
+	}
+	if summary.CopiedFiles != 1 {
+		t.Fatalf("expected archived PDF source ZIP copied once, got %d", summary.CopiedFiles)
+	}
+	row := summary.ManifestRows[0]
+	if row.ArchivePath != "archives/pdf-bundle.zip" {
+		t.Fatalf("expected archive path archives/pdf-bundle.zip, got %q", row.ArchivePath)
+	}
+	if row.ArchiveInternalPath != "docs/notes.pdf" {
+		t.Fatalf("expected archive internal path docs/notes.pdf, got %q", row.ArchiveInternalPath)
+	}
+	if row.ContentHitTotal != 1 {
+		t.Fatalf("expected 1 archived PDF content hit, got %d", row.ContentHitTotal)
+	}
+	if row.ContentStatus != "archive_member_searched" {
+		t.Fatalf("expected archive_member_searched content status, got %q", row.ContentStatus)
+	}
+}
+
 func TestRunWithSummarySearchesLegacyOfficeContentViaSoffice(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("stub shell helper uses /bin/sh")
@@ -573,6 +683,48 @@ func TestRunWithSummaryWarnsWhenSofficeProducesNoTextFile(t *testing.T) {
 	}
 	if got := summary.Warnings[0]; got != "docs/legacy.doc: soffice conversion completed but did not produce a text file" {
 		t.Fatalf("unexpected soffice missing-output warning %q", got)
+	}
+}
+
+func TestRunWithSummarySearchesLegacyOfficeInsideZipViaSoffice(t *testing.T) {
+	sourceDir := t.TempDir()
+	outputDir := t.TempDir()
+	stubDir := t.TempDir()
+	installStubCommand(t, stubDir, "soffice", "#!/bin/sh\noutdir=''\ninput=''\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = \"--outdir\" ]; then\n    outdir=\"$2\"\n    shift 2\n    continue\n  fi\n  input=\"$1\"\n  shift\ndone\nbase=\"${input##*/}\"\nname=\"${base%.*}\"\nprintf 'AgencyX appears inside archived legacy office body\\n' > \"$outdir/$name.txt\"\n")
+	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	zipPath := filepath.Join(sourceDir, "archives", "legacy-bundle.zip")
+	mustWriteZip(t, zipPath, map[string]string{
+		"docs/legacy.doc": "legacy office placeholder",
+	})
+
+	summary, err := RunWithSummary(Config{
+		SourceDir:   sourceDir,
+		OutputDir:   outputDir,
+		Terms:       []string{"agencyx"},
+		SearchScope: SearchScopeBoth,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if summary.MatchedFiles != 1 {
+		t.Fatalf("expected 1 archived legacy office match, got %d", summary.MatchedFiles)
+	}
+	if summary.CopiedFiles != 1 {
+		t.Fatalf("expected archived legacy office ZIP copied once, got %d", summary.CopiedFiles)
+	}
+	row := summary.ManifestRows[0]
+	if row.ArchivePath != "archives/legacy-bundle.zip" {
+		t.Fatalf("expected archive path archives/legacy-bundle.zip, got %q", row.ArchivePath)
+	}
+	if row.ArchiveInternalPath != "docs/legacy.doc" {
+		t.Fatalf("expected archive internal path docs/legacy.doc, got %q", row.ArchiveInternalPath)
+	}
+	if row.ContentHitTotal != 1 {
+		t.Fatalf("expected 1 archived legacy office content hit, got %d", row.ContentHitTotal)
+	}
+	if row.ContentStatus != "archive_member_searched" {
+		t.Fatalf("expected archive_member_searched content status, got %q", row.ContentStatus)
 	}
 }
 

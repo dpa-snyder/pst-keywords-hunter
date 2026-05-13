@@ -109,6 +109,7 @@ Project docs and project state:
 - `README.md` - primary project guide
 - `docs/FILEHOG-USER-GUIDE.md` - FileHog operator guide
 - `docs/REVIEWER-GUIDE.md` - reviewer guide
+- `docs/RELEASE-SMOKE-CHECKLIST.md` - macOS/Linux release validation checklist
 - `TODO.md` - active follow-up list
 - `testing/` - organized test helpers and fixture generators
 - `project-dashboard/` - static project dashboard
@@ -253,6 +254,12 @@ The `testing/` tree is organized by tool:
 - `testing/filehog/`
 
 Each test area includes a fixture generator and a small runner script. Generated fixtures and outputs are ignored.
+
+The MailHog fixture generator now creates safe synthetic `.pst`, `.ost`, and `.msg` placeholders for archive-path testing. The FileHog fixture generator now creates safe synthetic PDF and legacy Office placeholders for extraction-path testing.
+
+For release validation on macOS and Linux, use:
+
+- `docs/RELEASE-SMOKE-CHECKLIST.md`
 
 ## Linux Packaging
 

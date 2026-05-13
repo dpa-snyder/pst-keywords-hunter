@@ -78,6 +78,8 @@ Each run writes a timestamped folder containing:
 - `run_config_*.json`
 - `script_log.txt`
 
+If a copied output filename would exceed filesystem component limits, the copied artifact name is shortened with a stable suffix. The manifests still preserve the original source `base_name` and source path context.
+
 ## Reviewer Output vs Technical Output
 
 Use the reviewer manifest first.

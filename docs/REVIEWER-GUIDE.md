@@ -41,6 +41,8 @@ The reviewer manifest is the main spreadsheet for sorting and filtering. The tec
 - `size_human`: human-readable file size for easier review
 - `note`: short explanation of how the item matched and what date source was used
 
+If a copied artifact name had to be shortened for filesystem limits, the reviewer sheet still keeps the original `base_name` and original source directory path for reference.
+
 ## How Rows Are Sorted
 
 The reviewer manifest is sorted to bring stronger evidence forward:

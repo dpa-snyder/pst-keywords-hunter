@@ -13,6 +13,8 @@ This repository keeps package-level Go tests close to the code and keeps repeata
 - Track scripts, test code, and small text fixtures in Git.
 - Do not track generated fixtures, test outputs, or machine-local manual sample sets.
 - Use `generated/`, `outputs/`, `tmp/`, and `manual-samples/` for ignored per-tool working folders.
+- Generated MailHog fixtures include synthetic `.pst`, `.ost`, and `.msg` placeholders so archive-path coverage never depends on private mail stores.
+- Generated FileHog fixtures include synthetic PDF and legacy Office placeholders so extraction-path coverage never depends on private documents.
 
 ## Typical Commands
 

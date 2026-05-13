@@ -407,6 +407,204 @@ func TestRunWithSummaryWritesReviewerAndTechnicalArtifacts(t *testing.T) {
 	}
 }
 
+func TestRunWithSummaryScansPSTAndOSTViaReadPSTStub(t *testing.T) {
+	cases := []struct {
+		name     string
+		fileName string
+		fileType FileType
+	}{
+		{name: "pst", fileName: "archive.pst", fileType: TypePST},
+		{name: "ost", fileName: "offline.ost", fileType: TypeOST},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sourceRoot := t.TempDir()
+			outputRoot := t.TempDir()
+			stubDir := t.TempDir()
+			installMailStubCommand(t, stubDir, "readpst", `#!/bin/sh
+outdir=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-o" ]; then
+    outdir="$2"
+    shift 2
+    continue
+  fi
+  shift
+done
+mkdir -p "$outdir/Inbox"
+cat >"$outdir/Inbox/hit.eml" <<'EOF'
+From: archive@example.com
+To: review@example.com
+Date: Tue, 02 Jan 2024 12:00:00 -0500
+Subject: Archive update
+
+Harbor appears in extracted mail body.
+EOF
+`)
+			prependMailPath(t, stubDir)
+			mustWriteMailFile(t, filepath.Join(sourceRoot, tc.fileName), "synthetic archive placeholder")
+
+			summary, err := RunWithSummary(Config{
+				SourceDir: sourceRoot,
+				OutputDir: outputRoot,
+				Terms:     []string{"Harbor"},
+				EnabledTypes: map[FileType]bool{
+					tc.fileType: true,
+				},
+			}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if !summary.HasReadPST {
+				t.Fatalf("expected readpst dependency to be available in summary")
+			}
+			if summary.FilesScanned != 1 {
+				t.Fatalf("expected 1 source file scanned, got %d", summary.FilesScanned)
+			}
+			if got := summary.KeywordHits["Harbor"]; got != 1 {
+				t.Fatalf("expected 1 keyword hit, got %d", got)
+			}
+			if got := summary.HitsByType[tc.fileType.String()]; got != 1 {
+				t.Fatalf("expected 1 hit for source type %s, got %d", tc.fileType, got)
+			}
+			if len(summary.ManifestRows) != 1 {
+				t.Fatalf("expected 1 manifest row, got %d", len(summary.ManifestRows))
+			}
+			row := summary.ManifestRows[0]
+			if row.SourceType != tc.fileType.String() {
+				t.Fatalf("expected source type %q, got %q", tc.fileType.String(), row.SourceType)
+			}
+			if row.SourceContainerPath != tc.fileName {
+				t.Fatalf("expected source container path %q, got %q", tc.fileName, row.SourceContainerPath)
+			}
+			if row.MessageRelativePath != "Inbox/hit.eml" {
+				t.Fatalf("expected extracted relative path Inbox/hit.eml, got %q", row.MessageRelativePath)
+			}
+			if row.HitLocations != "body" {
+				t.Fatalf("expected body hit location, got %q", row.HitLocations)
+			}
+			if _, err := os.Stat(filepath.Join(outputRoot, row.OutputEMLPath)); err != nil {
+				t.Fatalf("expected exported EML at %s: %v", row.OutputEMLPath, err)
+			}
+		})
+	}
+}
+
+func TestRunWithSummaryScansMSGViaSyntheticConverter(t *testing.T) {
+	sourceRoot := t.TempDir()
+	outputRoot := t.TempDir()
+	homeDir := t.TempDir()
+	stubDir := t.TempDir()
+
+	installMailStubCommand(t, stubDir, "python3", "#!/bin/sh\nexit 0\n")
+	prependMailPath(t, stubDir)
+	t.Setenv("HOME", homeDir)
+
+	msgPython := filepath.Join(homeDir, ".keyword-hunter", "msg-support", "bin", "python")
+	installMailStubCommand(t, filepath.Dir(msgPython), "python", `#!/bin/sh
+if [ "$1" != "-c" ]; then
+  exit 1
+fi
+if [ $# -eq 2 ]; then
+  exit 0
+fi
+out_path="$4"
+cat >"$out_path" <<'EOF'
+From: converted@example.com
+To: review@example.com
+Date: Tue, 02 Jan 2024 13:00:00 -0500
+Subject: MSG update
+X-Converted-From: MSG
+
+Harbor appears in converted body.
+EOF
+`)
+
+	mustWriteMailFile(t, filepath.Join(sourceRoot, "sample.msg"), "synthetic msg placeholder")
+
+	summary, err := RunWithSummary(Config{
+		SourceDir: sourceRoot,
+		OutputDir: outputRoot,
+		Terms:     []string{"Harbor"},
+		EnabledTypes: map[FileType]bool{
+			TypeMSG: true,
+		},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !summary.HasHighFidelityMSG {
+		t.Fatalf("expected high-fidelity MSG support to be available in summary")
+	}
+	if summary.FilesScanned != 1 {
+		t.Fatalf("expected 1 source file scanned, got %d", summary.FilesScanned)
+	}
+	if got := summary.KeywordHits["Harbor"]; got != 1 {
+		t.Fatalf("expected 1 keyword hit, got %d", got)
+	}
+	if got := summary.HitsByType[TypeMSG.String()]; got != 1 {
+		t.Fatalf("expected 1 MSG hit, got %d", got)
+	}
+	if len(summary.ManifestRows) != 1 {
+		t.Fatalf("expected 1 manifest row, got %d", len(summary.ManifestRows))
+	}
+	row := summary.ManifestRows[0]
+	if row.SourceType != TypeMSG.String() {
+		t.Fatalf("expected source type %q, got %q", TypeMSG.String(), row.SourceType)
+	}
+	if row.MessageBaseName != "sample.eml" {
+		t.Fatalf("expected converted message base name sample.eml, got %q", row.MessageBaseName)
+	}
+	if row.HitLocations != "body" {
+		t.Fatalf("expected body hit location, got %q", row.HitLocations)
+	}
+	if _, err := os.Stat(filepath.Join(outputRoot, row.OutputEMLPath)); err != nil {
+		t.Fatalf("expected exported EML at %s: %v", row.OutputEMLPath, err)
+	}
+}
+
+func TestRunWithSummaryRecordsArchiveConversionFailures(t *testing.T) {
+	sourceRoot := t.TempDir()
+	outputRoot := t.TempDir()
+	stubDir := t.TempDir()
+
+	installMailStubCommand(t, stubDir, "readpst", "#!/bin/sh\necho 'readpst exploded' >&2\nexit 1\n")
+	prependMailPath(t, stubDir)
+	mustWriteMailFile(t, filepath.Join(sourceRoot, "broken.pst"), "synthetic archive placeholder")
+
+	summary, err := RunWithSummary(Config{
+		SourceDir: sourceRoot,
+		OutputDir: outputRoot,
+		Terms:     []string{"Harbor"},
+		EnabledTypes: map[FileType]bool{
+			TypePST: true,
+		},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if summary.SkippedTotal != 1 {
+		t.Fatalf("expected 1 skipped source, got %d", summary.SkippedTotal)
+	}
+	if len(summary.Errors) != 1 {
+		t.Fatalf("expected 1 recorded error, got %d", len(summary.Errors))
+	}
+	if len(summary.ManifestRows) != 1 {
+		t.Fatalf("expected 1 manifest row, got %d", len(summary.ManifestRows))
+	}
+	row := summary.ManifestRows[0]
+	if row.Status != "skipped_source" {
+		t.Fatalf("expected skipped_source row, got %q", row.Status)
+	}
+	if !strings.Contains(row.Note, "readpst failed") {
+		t.Fatalf("expected readpst failure note, got %q", row.Note)
+	}
+}
+
 func mailParseDate(value string) (time.Time, error) {
 	return mail.ParseDate(value)
 }
@@ -417,6 +615,37 @@ func headerIndexMap(headers []string) map[string]int {
 		indexes[header] = i
 	}
 	return indexes
+}
+
+func mustWriteMailFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func installMailStubCommand(t *testing.T, dir, name, script string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func prependMailPath(t *testing.T, dir string) {
+	t.Helper()
+	current := os.Getenv("PATH")
+	if current == "" {
+		t.Setenv("PATH", dir)
+		return
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+current)
 }
 
 func TestFindKeywordLocationsBytesReturnsHeaderSubjectAndBody(t *testing.T) {
